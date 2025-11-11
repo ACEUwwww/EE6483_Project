@@ -1,7 +1,7 @@
 import argparse
 import os
 from pathlib import Path
-from typing import Tuple
+from typing import Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -26,64 +26,103 @@ EPOCHS: int = 5
 RANDOM_STATE: int = 42
 
 
-def build_dataframe(image_dir: Path) -> pd.DataFrame:
+def build_dataframe(image_dir: Path, label_from_subdir: bool = False) -> pd.DataFrame:
     """Scan the directory and build a dataframe with file paths and labels."""
     if not image_dir.exists():
         raise FileNotFoundError(f"Directory not found: {image_dir}")
 
-    filepaths = [
-        path for path in image_dir.iterdir()
-        if path.suffix.lower() in {".jpg", ".jpeg", ".png"}
-    ]
-    if not filepaths:
-        raise FileNotFoundError(f"No image files found in {image_dir}.")
-
     records = []
-    for path in sorted(filepaths):
-        name = path.name.lower()
-        if "cat" in name:
-            label = "cat"
-        elif "dog" in name:
-            label = "dog"
-        else:
-            # Skip files without explicit cat/dog label in the filename
-            continue
-        records.append({"filepath": str(path), "label": label})
+    image_extensions = {".jpg", ".jpeg", ".png"}
+
+    if label_from_subdir:
+        for class_dir in sorted(image_dir.iterdir()):
+            if not class_dir.is_dir():
+                continue
+            label = class_dir.name.lower()
+            for path in sorted(class_dir.iterdir()):
+                if path.is_file() and path.suffix.lower() in image_extensions:
+                    records.append({"filepath": str(path), "label": label})
+    else:
+        for path in sorted(image_dir.iterdir()):
+            if path.is_file() and path.suffix.lower() in image_extensions:
+                name = path.name.lower()
+                if "cat" in name:
+                    label = "cat"
+                elif "dog" in name:
+                    label = "dog"
+                else:
+                    # Skip files without explicit cat/dog label in the filename
+                    continue
+                records.append({"filepath": str(path), "label": label})
 
     if not records:
-        raise ValueError(f"No filenames containing cat/dog labels found in {image_dir}.")
+        raise ValueError(f"No labeled images found in {image_dir}.")
 
     df = pd.DataFrame(records)
     return df
 
 
-def build_generators(train_df: pd.DataFrame):
+def build_generators(
+    train_df: pd.DataFrame,
+    val_df: Optional[pd.DataFrame] = None,
+):
     """Build training and validation data generators."""
-    datagen = ImageDataGenerator(rescale=1.0 / 255, validation_split=0.2)
+    if train_df.empty:
+        raise ValueError("Training dataframe is empty.")
 
-    train_generator = datagen.flow_from_dataframe(
-        dataframe=train_df,
-        x_col="filepath",
-        y_col="label",
-        target_size=IMAGE_SIZE,
-        class_mode="binary",
-        batch_size=BATCH_SIZE,
-        subset="training",
-        shuffle=True,
-        seed=RANDOM_STATE,
-    )
+    if val_df is not None and val_df.empty:
+        raise ValueError("Validation dataframe is empty.")
 
-    val_generator = datagen.flow_from_dataframe(
-        dataframe=train_df,
-        x_col="filepath",
-        y_col="label",
-        target_size=IMAGE_SIZE,
-        class_mode="binary",
-        batch_size=BATCH_SIZE,
-        subset="validation",
-        shuffle=False,
-        seed=RANDOM_STATE,
-    )
+    if val_df is not None:
+        train_datagen = ImageDataGenerator(rescale=1.0 / 255)
+        val_datagen = ImageDataGenerator(rescale=1.0 / 255)
+
+        train_generator = train_datagen.flow_from_dataframe(
+            dataframe=train_df,
+            x_col="filepath",
+            y_col="label",
+            target_size=IMAGE_SIZE,
+            class_mode="binary",
+            batch_size=BATCH_SIZE,
+            shuffle=True,
+            seed=RANDOM_STATE,
+        )
+
+        val_generator = val_datagen.flow_from_dataframe(
+            dataframe=val_df,
+            x_col="filepath",
+            y_col="label",
+            target_size=IMAGE_SIZE,
+            class_mode="binary",
+            batch_size=BATCH_SIZE,
+            shuffle=False,
+        )
+    else:
+        datagen = ImageDataGenerator(rescale=1.0 / 255, validation_split=0.2)
+
+        train_generator = datagen.flow_from_dataframe(
+            dataframe=train_df,
+            x_col="filepath",
+            y_col="label",
+            target_size=IMAGE_SIZE,
+            class_mode="binary",
+            batch_size=BATCH_SIZE,
+            subset="training",
+            shuffle=True,
+            seed=RANDOM_STATE,
+        )
+
+        val_generator = datagen.flow_from_dataframe(
+            dataframe=train_df,
+            x_col="filepath",
+            y_col="label",
+            target_size=IMAGE_SIZE,
+            class_mode="binary",
+            batch_size=BATCH_SIZE,
+            subset="validation",
+            shuffle=False,
+            seed=RANDOM_STATE,
+        )
 
     return train_generator, val_generator
 
@@ -252,17 +291,37 @@ def parse_args():
 def main():
     args = parse_args()
     project_root = Path(__file__).resolve().parent
-    train_dir = project_root / "train"
-    test_dir = project_root / "test1"
+    dataset_root = project_root / "datasets"
+    default_train = dataset_root / "train"
+
+    if default_train.exists():
+        train_dir = default_train
+        val_dir: Optional[Path] = dataset_root / "val" if (dataset_root / "val").exists() else None
+        test_dir = dataset_root / "test" if (dataset_root / "test").exists() else project_root / "test1"
+    else:
+        train_dir = project_root / "train"
+        val_dir = project_root / "val" if (project_root / "val").exists() else None
+        test_dir = project_root / "test1" if (project_root / "test1").exists() else project_root / "test"
     epochs = args.epochs if args.epochs is not None else EPOCHS
     model_path = Path(args.model_path) if args.model_path else project_root / "dog_cat_cnn.h5"
 
-    print("Indexing training data...")
-    train_df = build_dataframe(train_dir)
+    if not train_dir.exists():
+        raise FileNotFoundError(f"Training directory not found: {train_dir}")
+
+    print(f"Indexing training data from {train_dir}...")
+    train_use_subdirs = train_dir.exists() and any(item.is_dir() for item in train_dir.iterdir())
+    train_df = build_dataframe(train_dir, label_from_subdir=train_use_subdirs)
     print(f"Number of training samples: {len(train_df)}")
 
+    val_df = None
+    if val_dir and val_dir.exists():
+        print(f"Indexing validation data from {val_dir}...")
+        val_use_subdirs = any(item.is_dir() for item in val_dir.iterdir())
+        val_df = build_dataframe(val_dir, label_from_subdir=val_use_subdirs or train_use_subdirs)
+        print(f"Number of validation samples: {len(val_df)}")
+
     print("Building data generators...")
-    train_gen, val_gen = build_generators(train_df)
+    train_gen, val_gen = build_generators(train_df, val_df)
 
     if args.no_train:
         if not model_path.exists():
@@ -285,6 +344,8 @@ def main():
     evaluate_model(model, val_gen, project_root)
 
     print("Preparing test generator and running inference...")
+    if not test_dir or not test_dir.exists():
+        raise FileNotFoundError(f"Test directory not found: {test_dir}")
     test_gen, test_df = build_test_generator(test_dir)
     prob_predictions = model.predict(test_gen).ravel()
     binary_predictions = (prob_predictions >= 0.5).astype(int)

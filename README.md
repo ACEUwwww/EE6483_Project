@@ -3,8 +3,9 @@
 本项目面向 EE6483 课程，提供一个基于卷积神经网络的猫狗图像二分类示例，使用独立脚本完成训练与预测。
 
 ## 目录结构
-- `train/`：训练集图片，文件名需包含 `cat` 或 `dog`
-- `test1/`：测试集图片，预测时会直接读取
+- `datasets/train/cat|dog/`：训练集图片；若无此目录，则回退读取 `train/`
+- `datasets/val/cat|dog/`：验证集图片（可选）；若缺失则自动从训练集中划分
+- `datasets/test/`：测试集图片；若缺失则回退读取 `test1/` 或 `test/`
 - `Dog_cat_classfier_CNN.py`：独立脚本，可直接训练并生成预测
 - `requirement.txt`：pip 依赖列表
 - `environment.yml`：conda 环境定义
@@ -26,17 +27,17 @@ pip install -r requirement.txt
 python Dog_cat_classfier_CNN.py
 ```
 脚本将执行以下步骤：
-1. 扫描 `train/` 目录并根据文件名生成标签
+1. 扫描数据集目录并根据子目录名（或文件名）生成标签
 2. 构建数据生成器与简单 CNN 模型并开始训练
 3. 训练完成后保存模型到 `dog_cat_cnn.h5`
 4. 在验证集上输出混淆矩阵、F1 分数、ROC AUC，并生成 `confusion_matrix.png` 与 `roc_curve.png`
-5. 对 `test1/` 目录中的图片预测，并将结果写入 `submission.csv`
+5. 对测试集目录中的图片预测，并将结果写入 `submission.csv`
 
 若已训练并保存模型，可使用：
 ```bash
 python Dog_cat_classfier_CNN.py --no-train
 ```
-脚本会加载已有的 `dog_cat_cnn.h5`，直接执行评估与推理。
+脚本会加载已有的 `dog_cat_cnn.h5`，直接执行评估与推理。可通过 `--model-path` 指定其他模型文件，使用 `--epochs` 调整训练轮数。
 
 ## 注意事项
 - 训练与测试目录请放置同尺寸或可缩放的 JPG/PNG 图片
