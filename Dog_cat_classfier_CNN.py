@@ -4,12 +4,12 @@ from typing import Tuple
 
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import train_test_split
 import tensorflow as tf
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
 
+print(tf.config.list_physical_devices('GPU'))
 
 IMAGE_SIZE: Tuple[int, int] = (150, 150)
 BATCH_SIZE: int = 32
@@ -18,16 +18,16 @@ RANDOM_STATE: int = 42
 
 
 def build_dataframe(image_dir: Path) -> pd.DataFrame:
-    """扫描目录下的图片并生成文件路径与标签 DataFrame。"""
+    """Scan the directory and build a dataframe with file paths and labels."""
     if not image_dir.exists():
-        raise FileNotFoundError(f"未找到目录：{image_dir}")
+        raise FileNotFoundError(f"Directory not found: {image_dir}")
 
     filepaths = [
         path for path in image_dir.iterdir()
         if path.suffix.lower() in {".jpg", ".jpeg", ".png"}
     ]
     if not filepaths:
-        raise FileNotFoundError(f"{image_dir} 中未发现图片文件。")
+        raise FileNotFoundError(f"No image files found in {image_dir}.")
 
     records = []
     for path in sorted(filepaths):
@@ -37,19 +37,19 @@ def build_dataframe(image_dir: Path) -> pd.DataFrame:
         elif "dog" in name:
             label = "dog"
         else:
-            # 如果文件名不含 cat/dog，跳过该样本
+            # Skip files without explicit cat/dog label in the filename
             continue
         records.append({"filepath": str(path), "label": label})
 
     if not records:
-        raise ValueError(f"{image_dir} 中未找到包含 cat/dog 标签的文件名。")
+        raise ValueError(f"No filenames containing cat/dog labels found in {image_dir}.")
 
     df = pd.DataFrame(records)
     return df
 
 
 def build_generators(train_df: pd.DataFrame):
-    """构建训练与验证数据生成器。"""
+    """Build training and validation data generators."""
     datagen = ImageDataGenerator(rescale=1.0 / 255, validation_split=0.2)
 
     train_generator = datagen.flow_from_dataframe(
@@ -80,13 +80,13 @@ def build_generators(train_df: pd.DataFrame):
 
 
 def build_test_generator(test_dir: Path):
-    """构建测试集数据生成器与辅助 DataFrame。"""
+    """Build test data generator and helper dataframe."""
     filepaths = [
         path for path in test_dir.iterdir()
         if path.suffix.lower() in {".jpg", ".jpeg", ".png"}
     ]
     if not filepaths:
-        raise FileNotFoundError(f"{test_dir} 中未发现图片文件。")
+        raise FileNotFoundError(f"No image files found in {test_dir}.")
 
     filepaths = sorted(filepaths, key=lambda p: p.name)
     test_df = pd.DataFrame(
@@ -111,7 +111,7 @@ def build_test_generator(test_dir: Path):
 
 
 def build_model(input_shape: Tuple[int, int, int] = (150, 150, 3)) -> Sequential:
-    """创建一个简单的卷积神经网络。"""
+    """Create a simple convolutional neural network."""
     model = Sequential(
         [
             Conv2D(32, (3, 3), activation="relu", input_shape=input_shape),
@@ -140,17 +140,17 @@ def main():
     train_dir = project_root / "train"
     test_dir = project_root / "test1"
 
-    print("构建训练数据索引...")
+    print("Indexing training data...")
     train_df = build_dataframe(train_dir)
-    print(f"训练样本数：{len(train_df)}")
+    print(f"Number of training samples: {len(train_df)}")
 
-    print("构建数据生成器...")
+    print("Building data generators...")
     train_gen, val_gen = build_generators(train_df)
 
-    print("构建模型...")
+    print("Building model...")
     model = build_model(input_shape=IMAGE_SIZE + (3,))
 
-    print("开始训练模型...")
+    print("Training model...")
     history = model.fit(
         train_gen,
         epochs=EPOCHS,
@@ -160,9 +160,9 @@ def main():
 
     model_path = project_root / "dog_cat_cnn.h5"
     model.save(model_path)
-    print(f"模型已保存到 {model_path}")
+    print(f"Model saved to {model_path}")
 
-    print("构建测试集生成器并进行推理...")
+    print("Preparing test generator and running inference...")
     test_gen, test_df = build_test_generator(test_dir)
     predictions = model.predict(test_gen).ravel()
 
@@ -174,11 +174,11 @@ def main():
     )
     submission_path = project_root / "submission.csv"
     submission.to_csv(submission_path, index=False)
-    print(f"预测结果已保存至 {submission_path}")
+    print(f"Predictions written to {submission_path}")
 
 
 if __name__ == "__main__":
-    # 限制 TensorFlow 的日志等级，保持输出简洁
+    # Reduce TensorFlow logging verbosity
     os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
     main()
 
