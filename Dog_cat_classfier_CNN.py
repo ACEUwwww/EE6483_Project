@@ -5,9 +5,17 @@ from typing import Tuple
 import numpy as np
 import pandas as pd
 import tensorflow as tf
+from sklearn.metrics import (
+    classification_report,
+    confusion_matrix,
+    f1_score,
+    roc_auc_score,
+    roc_curve,
+)
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
+import matplotlib.pyplot as plt
 
 print(tf.config.list_physical_devices('GPU'))
 
@@ -135,6 +143,84 @@ def build_model(input_shape: Tuple[int, int, int] = (150, 150, 3)) -> Sequential
     return model
 
 
+def evaluate_model(model: Sequential, val_generator, output_dir: Path):
+    """Evaluate the model on the validation generator and save diagnostic plots."""
+    print("Evaluating model on validation data...")
+    val_generator.reset()
+    y_prob = model.predict(val_generator).ravel()
+    y_true = val_generator.classes
+    y_pred = (y_prob >= 0.5).astype(int)
+
+    class_indices = val_generator.class_indices
+    class_names = [name for name, idx in sorted(class_indices.items(), key=lambda item: item[1])]
+
+    cm = confusion_matrix(y_true, y_pred)
+    f1 = f1_score(y_true, y_pred, zero_division=0)
+    try:
+        auc = roc_auc_score(y_true, y_prob)
+    except ValueError:
+        auc = float("nan")
+        print("Warning: ROC AUC could not be computed (only one class present).")
+    report = classification_report(
+        y_true,
+        y_pred,
+        target_names=class_names,
+        zero_division=0,
+    )
+
+    print("Validation classification report:")
+    print(report)
+    print(f"Validation F1 score: {f1:.4f}")
+    print(f"Validation ROC AUC: {auc:.4f}")
+
+    cm_fig, ax = plt.subplots(figsize=(4, 4))
+    im = ax.imshow(cm, interpolation="nearest", cmap=plt.cm.Blues)
+    ax.figure.colorbar(im, ax=ax)
+    tick_marks = range(len(class_names))
+    ax.set_xticks(tick_marks)
+    ax.set_yticks(tick_marks)
+    ax.set_xticklabels(class_names)
+    ax.set_yticklabels(class_names)
+    ax.set_xlabel("Predicted label")
+    ax.set_ylabel("True label")
+    ax.set_title("Confusion Matrix")
+
+    thresh = cm.max() / 2.0
+    for i in range(cm.shape[0]):
+        for j in range(cm.shape[1]):
+            ax.text(
+                j,
+                i,
+                format(cm[i, j], "d"),
+                ha="center",
+                va="center",
+                color="white" if cm[i, j] > thresh else "black",
+            )
+
+    cm_fig.tight_layout()
+    cm_path = output_dir / "confusion_matrix.png"
+    cm_fig.savefig(cm_path)
+    plt.close(cm_fig)
+    print(f"Confusion matrix saved to {cm_path}")
+
+    if not np.isnan(auc):
+        fpr, tpr, _ = roc_curve(y_true, y_prob)
+        roc_fig, ax = plt.subplots()
+        ax.plot(fpr, tpr, label=f"ROC curve (AUC = {auc:.4f})")
+        ax.plot([0, 1], [0, 1], linestyle="--", color="gray")
+        ax.set_xlabel("False Positive Rate")
+        ax.set_ylabel("True Positive Rate")
+        ax.set_title("ROC Curve")
+        ax.legend(loc="lower right")
+        roc_fig.tight_layout()
+        roc_path = output_dir / "roc_curve.png"
+        roc_fig.savefig(roc_path)
+        plt.close(roc_fig)
+        print(f"ROC curve saved to {roc_path}")
+    else:
+        print("ROC curve was not generated.")
+
+
 def main():
     project_root = Path(__file__).resolve().parent
     train_dir = project_root / "train"
@@ -158,6 +244,8 @@ def main():
         verbose=1,
     )
 
+    evaluate_model(model, val_gen, project_root)
+
     model_path = project_root / "dog_cat_cnn.h5"
     model.save(model_path)
     print(f"Model saved to {model_path}")
@@ -169,7 +257,7 @@ def main():
     submission = pd.DataFrame(
         {
             "id": test_df["id"],
-            "label": predictions,
+            "label": 0 if predictions < 0.5 else 1,
         }
     )
     submission_path = project_root / "submission.csv"

@@ -29,7 +29,8 @@ python Dog_cat_classfier_CNN.py
 1. 扫描 `train/` 目录并根据文件名生成标签
 2. 构建数据生成器与简单 CNN 模型并开始训练
 3. 训练完成后保存模型到 `dog_cat_cnn.h5`
-4. 对 `test1/` 目录中的图片预测，并将结果写入 `submission.csv`
+4. 在验证集上输出混淆矩阵、F1 分数、ROC AUC，并生成 `confusion_matrix.png` 与 `roc_curve.png`
+5. 对 `test1/` 目录中的图片预测，并将结果写入 `submission.csv`
 
 ## 注意事项
 - 训练与测试目录请放置同尺寸或可缩放的 JPG/PNG 图片
