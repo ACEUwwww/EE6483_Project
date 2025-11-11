@@ -1,3 +1,4 @@
+import argparse
 import os
 from pathlib import Path
 from typing import Tuple
@@ -96,11 +97,16 @@ def build_test_generator(test_dir: Path):
     if not filepaths:
         raise FileNotFoundError(f"No image files found in {test_dir}.")
 
-    filepaths = sorted(filepaths, key=lambda p: p.name)
+    try:
+        filepaths = sorted(filepaths, key=lambda p: int(p.stem))
+        ids = [int(p.stem) for p in filepaths]
+    except ValueError:
+        filepaths = sorted(filepaths, key=lambda p: p.name.lower())
+        ids = [p.stem for p in filepaths]
     test_df = pd.DataFrame(
         {
             "filepath": [str(p) for p in filepaths],
-            "id": [p.stem for p in filepaths],
+            "id": ids,
         }
     )
 
@@ -221,10 +227,35 @@ def evaluate_model(model: Sequential, val_generator, output_dir: Path):
         print("ROC curve was not generated.")
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Train or evaluate a cat vs dog CNN classifier.")
+    parser.add_argument(
+        "--no-train",
+        action="store_true",
+        help="Skip training and load an existing model.",
+    )
+    parser.add_argument(
+        "--model-path",
+        type=str,
+        default=None,
+        help="Path to the saved model file (defaults to dog_cat_cnn.h5).",
+    )
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=None,
+        help=f"Number of training epochs (default: {EPOCHS}).",
+    )
+    return parser.parse_args()
+
+
 def main():
+    args = parse_args()
     project_root = Path(__file__).resolve().parent
     train_dir = project_root / "train"
     test_dir = project_root / "test1"
+    epochs = args.epochs if args.epochs is not None else EPOCHS
+    model_path = Path(args.model_path) if args.model_path else project_root / "dog_cat_cnn.h5"
 
     print("Indexing training data...")
     train_df = build_dataframe(train_dir)
@@ -233,33 +264,39 @@ def main():
     print("Building data generators...")
     train_gen, val_gen = build_generators(train_df)
 
-    print("Building model...")
-    model = build_model(input_shape=IMAGE_SIZE + (3,))
-
-    print("Training model...")
-    history = model.fit(
-        train_gen,
-        epochs=EPOCHS,
-        validation_data=val_gen,
-        verbose=1,
-    )
+    if args.no_train:
+        if not model_path.exists():
+            raise FileNotFoundError(f"Model file not found: {model_path}")
+        print(f"Loading model from {model_path}...")
+        model = tf.keras.models.load_model(model_path)
+    else:
+        print("Building model...")
+        model = build_model(input_shape=IMAGE_SIZE + (3,))
+        print(f"Training model for {epochs} epochs...")
+        model.fit(
+            train_gen,
+            epochs=epochs,
+            validation_data=val_gen,
+            verbose=1,
+        )
+        model.save(model_path)
+        print(f"Model saved to {model_path}")
 
     evaluate_model(model, val_gen, project_root)
 
-    model_path = project_root / "dog_cat_cnn.h5"
-    model.save(model_path)
-    print(f"Model saved to {model_path}")
-
     print("Preparing test generator and running inference...")
     test_gen, test_df = build_test_generator(test_dir)
-    predictions = model.predict(test_gen).ravel()
+    prob_predictions = model.predict(test_gen).ravel()
+    binary_predictions = (prob_predictions >= 0.5).astype(int)
 
     submission = pd.DataFrame(
         {
             "id": test_df["id"],
-            "label": 0 if predictions < 0.5 else 1,
+            "label": binary_predictions,
         }
     )
+    if submission["id"].dtype.kind in {"i", "u", "f"}:
+        submission = submission.sort_values("id")
     submission_path = project_root / "submission.csv"
     submission.to_csv(submission_path, index=False)
     print(f"Predictions written to {submission_path}")
